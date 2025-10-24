@@ -1,0 +1,1 @@
+// This file is deprecated and can be deleted. Mock data for database seeding is in /mock-data.js

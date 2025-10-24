@@ -1,0 +1,25 @@
+version: '3.8'
+
+# Override file for development environment
+# Use with: docker-compose -f docker-compose.yml -f docker-compose.override.yml up
+
+services:
+  backend:
+    environment:
+      NODE_ENV: development
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    command: npm run dev
+
+  frontend:
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: npm run dev
+
+  nginx:
+    ports:
+      - "80:80"
+      # Comment out SSL port for development
+      # - "443:443"
