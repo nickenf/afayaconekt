@@ -1,0 +1,69 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs and artifacts
+dist/
+build/
+.cache/
+.parcel-cache/
+
+# Environment variables and sensitive files
+.env*
+!.env.example
+afyaconnect.db
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Coverage and testing
+coverage/
+.nyc_output/
+.coverage/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Deployment copies (if generated)
+deployment/
+
+# Uploads (sensitive data)
+uploads/
+
+# Docker (ensure deployment files are included - these are not ignored)
+# Docker files like Dockerfile, docker-compose.yml, etc. are intentionally not ignored
+
+# Miscellaneous
+*.bak
+*.backup
+*.old
