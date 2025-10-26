@@ -20,6 +20,10 @@ WORKDIR /app
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001
 
+# Create necessary directories
+RUN mkdir -p /app/uploads /app/logs && \
+    chown -R nodejs:nodejs /app/uploads /app/logs
+
 # Copy dependencies from base stage
 COPY --from=base --chown=nodejs:nodejs /app/node_modules ./node_modules
 

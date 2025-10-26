@@ -4,6 +4,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import multer from 'multer';
 import { GoogleGenAI } from "@google/genai";
 import { initializeDatabase } from './database.js';
@@ -35,9 +37,29 @@ const __dirname = path.dirname(__filename);
 // --- Database ---
 const db = await initializeDatabase();
 
-// --- Middleware ---
-app.use(cors()); // Enable Cross-Origin Resource Sharing
-app.use(express.json()); // Middleware to parse JSON bodies
+// --- Security Middleware ---
+app.use(helmet()); // Security headers
+
+// Rate limiting
+const limiter = rateLimit({
+    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
+    max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100, // limit each IP to 100 requests per windowMs
+    message: 'Too many requests from this IP, please try again later.',
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+app.use(limiter);
+
+// CORS configuration
+const corsOptions = {
+    origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+    credentials: true,
+    optionsSuccessStatus: 200
+};
+app.use(cors(corsOptions));
+
+app.use(express.json({ limit: '10mb' })); // Middleware to parse JSON bodies with size limit
+app.use(express.urlencoded({ extended: true, limit: '10mb' })); // Parse URL-encoded bodies
 
 // Serve uploaded files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -60,24 +82,16 @@ const storage = multer.diskStorage({
 const upload = multer({
     storage: storage,
     limits: {
-        fileSize: 5 * 1024 * 1024, // 5MB limit
+        fileSize: parseInt(process.env.MAX_FILE_SIZE) || 5 * 1024 * 1024, // 5MB limit from env
     },
     fileFilter: (req, file, cb) => {
         // Accept common image formats
-        const allowedMimes = [
-            'image/jpeg',
-            'image/jpg',
-            'image/png',
-            'image/gif',
-            'image/webp',
-            'image/bmp',
-            'image/tiff'
-        ];
+        const allowedMimes = (process.env.ALLOWED_FILE_TYPES || 'image/jpeg,image/png,image/gif,image/webp').split(',');
 
         if (allowedMimes.includes(file.mimetype)) {
             cb(null, true);
         } else {
-            cb(new Error('Only image files (JPG, PNG, GIF, WebP, BMP, TIFF) are allowed.'), false);
+            cb(new Error('Only image files (JPG, PNG, GIF, WebP) are allowed.'), false);
         }
     }
 });
@@ -91,14 +105,15 @@ app.get('/api/hospitals', async (req, res) => {
         // Select only the columns needed for the list view to optimize payload size.
         const columns = 'id, name, specialties, imageUrl, city, description, averageRating, ratingCount';
         if (query) {
-            const hospitals = await db.all(
-                `SELECT ${columns} FROM hospitals WHERE name LIKE ? OR specialties LIKE ? OR city LIKE ?`,
-                `%${query}%`, `%${query}%`, `%${query}%`
+            const hospitals = await db.query(
+                `SELECT ${columns} FROM hospitals WHERE name ILIKE $1 OR specialties ILIKE $1 OR city ILIKE $1`,
+                [`%${query}%`]
             );
+            hospitals = hospitals.rows;
             res.json(hospitals);
         } else {
-            const hospitals = await db.all(`SELECT ${columns} FROM hospitals`);
-            res.json(hospitals);
+            const hospitals = await db.query(`SELECT ${columns} FROM hospitals`);
+            res.json(hospitals.rows);
         }
     } catch (error) {
         console.error('Failed to fetch hospitals:', error);
@@ -110,7 +125,8 @@ app.get('/api/hospitals', async (req, res) => {
 app.get('/api/hospitals/:id', async (req, res) => {
     try {
         const hospitalId = parseInt(req.params.id);
-        const hospital = await db.get('SELECT * FROM hospitals WHERE id = ?', hospitalId);
+        const result = await db.query('SELECT * FROM hospitals WHERE id = $1', [hospitalId]);
+        const hospital = result.rows[0];
 
         if (hospital) {
             // Parse JSON fields before sending
@@ -271,7 +287,8 @@ app.get('/api/hospitals/advanced-search', async (req, res) => {
 app.get('/api/hospitals/name/:name', async (req, res) => {
     try {
         const hospitalName = req.params.name;
-        const hospital = await db.get('SELECT * FROM hospitals WHERE name = ?', hospitalName);
+        const result = await db.query('SELECT * FROM hospitals WHERE name = $1', [hospitalName]);
+        const hospital = result.rows[0];
 
         if (hospital) {
             // Parse JSON fields before sending
@@ -303,19 +320,19 @@ app.post('/api/hospitals', async (req, res) => {
         }
 
         // Check if hospital with same name already exists
-        const existingHospital = await db.get('SELECT id FROM hospitals WHERE name = ?', name);
-        if (existingHospital) {
+        const existingHospital = await db.query('SELECT id FROM hospitals WHERE name = $1', [name]);
+        if (existingHospital.rows.length > 0) {
             return res.status(400).json({ error: 'Hospital with this name already exists' });
         }
 
-        const result = await db.run(`
+        const result = await db.query(`
             INSERT INTO hospitals (
                 name, specialties, imageUrl, city, state, country, description,
                 accreditations, internationalPatientServices, gallery, establishedYear,
                 bedCount, doctorCount, nurseCount, languagesSpoken, contactPhone,
                 contactEmail, website, address, priceRange, insuranceAccepted,
                 paymentMethods, accommodationPartners, dietaryServices
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
         `, [
             name, specialties || '', imageUrl || '', city, state || '', country || 'India', description,
             accreditations ? JSON.stringify(accreditations) : '[]',
@@ -358,25 +375,25 @@ app.put('/api/hospitals/:id', async (req, res) => {
         }
 
         // Check if hospital exists
-        const existingHospital = await db.get('SELECT id FROM hospitals WHERE id = ?', hospitalId);
-        if (!existingHospital) {
+        const existingHospital = await db.query('SELECT id FROM hospitals WHERE id = $1', [hospitalId]);
+        if (existingHospital.rows.length === 0) {
             return res.status(404).json({ error: 'Hospital not found' });
         }
 
         // Check if another hospital with same name exists
-        const nameConflict = await db.get('SELECT id FROM hospitals WHERE name = ? AND id != ?', name, hospitalId);
-        if (nameConflict) {
+        const nameConflict = await db.query('SELECT id FROM hospitals WHERE name = $1 AND id != $2', [name, hospitalId]);
+        if (nameConflict.rows.length > 0) {
             return res.status(400).json({ error: 'Another hospital with this name already exists' });
         }
 
-        await db.run(`
+        await db.query(`
             UPDATE hospitals SET
-                name = ?, specialties = ?, imageUrl = ?, city = ?, state = ?, country = ?, description = ?,
-                accreditations = ?, internationalPatientServices = ?, gallery = ?, establishedYear = ?,
-                bedCount = ?, doctorCount = ?, nurseCount = ?, languagesSpoken = ?, contactPhone = ?,
-                contactEmail = ?, website = ?, address = ?, priceRange = ?, insuranceAccepted = ?,
-                paymentMethods = ?, accommodationPartners = ?, dietaryServices = ?, updatedAt = datetime('now')
-            WHERE id = ?
+                name = $1, specialties = $2, imageUrl = $3, city = $4, state = $5, country = $6, description = $7,
+                accreditations = $8, internationalPatientServices = $9, gallery = $10, establishedYear = $11,
+                bedCount = $12, doctorCount = $13, nurseCount = $14, languagesSpoken = $15, contactPhone = $16,
+                contactEmail = $17, website = $18, address = $19, priceRange = $20, insuranceAccepted = $21,
+                paymentMethods = $22, accommodationPartners = $23, dietaryServices = $24, updatedAt = CURRENT_TIMESTAMP
+            WHERE id = $25
         `, [
             name, specialties, imageUrl, city, state, country || 'India', description,
             accreditations ? JSON.stringify(accreditations) : '[]',
@@ -408,20 +425,20 @@ app.delete('/api/hospitals/:id', async (req, res) => {
         const hospitalId = parseInt(req.params.id);
 
         // Check if hospital exists
-        const hospital = await db.get('SELECT id FROM hospitals WHERE id = ?', hospitalId);
-        if (!hospital) {
+        const hospital = await db.query('SELECT id FROM hospitals WHERE id = $1', [hospitalId]);
+        if (hospital.rows.length === 0) {
             return res.status(404).json({ error: 'Hospital not found' });
         }
 
         // Check if hospital has associated doctors (optional: prevent deletion if it has doctors)
-        const doctorCount = await db.get('SELECT COUNT(*) as count FROM doctors WHERE hospitalId = ?', hospitalId);
-        if (doctorCount.count > 0) {
+        const doctorCount = await db.query('SELECT COUNT(*) as count FROM doctors WHERE hospitalId = $1', [hospitalId]);
+        if (doctorCount.rows[0].count > 0) {
             return res.status(400).json({
                 error: 'Cannot delete hospital with associated doctors. Please reassign or remove doctors first.'
             });
         }
 
-        await db.run('DELETE FROM hospitals WHERE id = ?', hospitalId);
+        await db.query('DELETE FROM hospitals WHERE id = $1', [hospitalId]);
 
         res.json({
             success: true,
@@ -448,24 +465,24 @@ app.post('/api/doctors', async (req, res) => {
         }
 
         // Check if hospital exists
-        const hospital = await db.get('SELECT id FROM hospitals WHERE id = ?', hospitalId);
-        if (!hospital) {
+        const hospital = await db.query('SELECT id FROM hospitals WHERE id = $1', [hospitalId]);
+        if (hospital.rows.length === 0) {
             return res.status(400).json({ error: 'Invalid hospital ID' });
         }
 
         // Check if specialty exists
-        const specialty = await db.get('SELECT id FROM medical_specialties WHERE id = ?', specialtyId);
-        if (!specialty) {
+        const specialty = await db.query('SELECT id FROM medical_specialties WHERE id = $1', [specialtyId]);
+        if (specialty.rows.length === 0) {
             return res.status(400).json({ error: 'Invalid specialty ID' });
         }
 
-        const result = await db.run(`
+        const result = await db.query(`
             INSERT INTO doctors (
                 hospitalId, firstName, lastName, title, specialtyId, subSpecialties,
                 qualifications, experience, imageUrl, biography, languagesSpoken,
                 consultationFee, availabilitySchedule, isAvailable, telemedicineAvailable,
                 contactEmail, licenseNumber, awards, publications
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
         `, [
             hospitalId, firstName, lastName, title || 'Dr.', specialtyId,
             subSpecialties ? JSON.stringify(subSpecialties) : '[]',
@@ -503,30 +520,30 @@ app.put('/api/doctors/:id', async (req, res) => {
         }
 
         // Check if doctor exists
-        const existingDoctor = await db.get('SELECT id FROM doctors WHERE id = ?', doctorId);
-        if (!existingDoctor) {
+        const existingDoctor = await db.query('SELECT id FROM doctors WHERE id = $1', [doctorId]);
+        if (existingDoctor.rows.length === 0) {
             return res.status(404).json({ error: 'Doctor not found' });
         }
 
         // Check if hospital exists
-        const hospital = await db.get('SELECT id FROM hospitals WHERE id = ?', hospitalId);
-        if (!hospital) {
+        const hospital = await db.query('SELECT id FROM hospitals WHERE id = $1', [hospitalId]);
+        if (hospital.rows.length === 0) {
             return res.status(400).json({ error: 'Invalid hospital ID' });
         }
 
         // Check if specialty exists
-        const specialty = await db.get('SELECT id FROM medical_specialties WHERE id = ?', specialtyId);
-        if (!specialty) {
+        const specialty = await db.query('SELECT id FROM medical_specialties WHERE id = $1', [specialtyId]);
+        if (specialty.rows.length === 0) {
             return res.status(400).json({ error: 'Invalid specialty ID' });
         }
 
-        await db.run(`
+        await db.query(`
             UPDATE doctors SET
-                hospitalId = ?, firstName = ?, lastName = ?, title = ?, specialtyId = ?, subSpecialties = ?,
-                qualifications = ?, experience = ?, imageUrl = ?, biography = ?, languagesSpoken = ?,
-                consultationFee = ?, availabilitySchedule = ?, isAvailable = ?, telemedicineAvailable = ?,
-                contactEmail = ?, licenseNumber = ?, awards = ?, publications = ?, updatedAt = datetime('now')
-            WHERE id = ?
+                hospitalId = $1, firstName = $2, lastName = $3, title = $4, specialtyId = $5, subSpecialties = $6,
+                qualifications = $7, experience = $8, imageUrl = $9, biography = $10, languagesSpoken = $11,
+                consultationFee = $12, availabilitySchedule = $13, isAvailable = $14, telemedicineAvailable = $15,
+                contactEmail = $16, licenseNumber = $17, awards = $18, publications = $19, updatedAt = CURRENT_TIMESTAMP
+            WHERE id = $20
         `, [
             hospitalId, firstName, lastName, title || 'Dr.', specialtyId,
             subSpecialties ? JSON.stringify(subSpecialties) : '[]',
@@ -559,14 +576,14 @@ app.delete('/api/doctors/:id', async (req, res) => {
         }
 
         // Check if doctor has associated appointments (optional: prevent deletion if active appointments)
-        const appointmentCount = await db.get('SELECT COUNT(*) as count FROM appointments WHERE doctorId = ? AND status NOT IN ("cancelled", "completed")', doctorId);
-        if (appointmentCount.count > 0) {
+        const appointmentCount = await db.query('SELECT COUNT(*) as count FROM appointments WHERE doctorId = $1 AND status NOT IN (\'cancelled\', \'completed\')', [doctorId]);
+        if (appointmentCount.rows[0].count > 0) {
             return res.status(400).json({
                 error: 'Cannot delete doctor with active appointments. Please cancel or complete appointments first.'
             });
         }
 
-        await db.run('DELETE FROM doctors WHERE id = ?', doctorId);
+        await db.query('DELETE FROM doctors WHERE id = $1', [doctorId]);
 
         res.json({
             success: true,
@@ -581,7 +598,7 @@ app.delete('/api/doctors/:id', async (req, res) => {
 // GET /api/doctors - Fetch all doctors
 app.get('/api/doctors', async (req, res) => {
     try {
-        const doctors = await db.all(`
+        const result = await db.query(`
             SELECT
                 d.*,
                 h.name as hospitalName,
@@ -593,6 +610,7 @@ app.get('/api/doctors', async (req, res) => {
             JOIN medical_specialties ms ON d.specialtyId = ms.id
             ORDER BY d.firstName, d.lastName
         `);
+        const doctors = result.rows;
 
         // Parse JSON fields
         doctors.forEach(doctor => {
@@ -624,7 +642,7 @@ app.get('/api/doctors', async (req, res) => {
 app.get('/api/doctors/:id', async (req, res) => {
     try {
         const doctorId = parseInt(req.params.id);
-        const doctor = await db.get(`
+        const result = await db.query(`
             SELECT
                 d.*,
                 h.name as hospitalName,
@@ -634,8 +652,9 @@ app.get('/api/doctors/:id', async (req, res) => {
             FROM doctors d
             JOIN hospitals h ON d.hospitalId = h.id
             JOIN medical_specialties ms ON d.specialtyId = ms.id
-            WHERE d.id = ?
-        `, doctorId);
+            WHERE d.id = $1
+        `, [doctorId]);
+        const doctor = result.rows[0];
 
         if (doctor) {
             // Parse JSON fields
@@ -684,32 +703,32 @@ app.post('/api/appointments', async (req, res) => {
         }
 
         // Check if doctor is available
-        if (!doctor.isAvailable) {
+        if (!doctor.rows[0].isAvailable) {
             return res.status(400).json({ error: 'Doctor is not currently available' });
         }
 
         // Check for conflicting appointments
-        const conflictingAppointment = await db.get(`
+        const conflictingAppointment = await db.query(`
             SELECT id FROM appointments
-            WHERE doctorId = ? AND appointmentDate = ? AND appointmentTime = ? AND status NOT IN ('cancelled', 'completed')
-        `, doctorId, appointmentDate, appointmentTime);
+            WHERE doctorId = $1 AND appointmentDate = $2 AND appointmentTime = $3 AND status NOT IN ('cancelled', 'completed')
+        `, [doctorId, appointmentDate, appointmentTime]);
 
-        if (conflictingAppointment) {
+        if (conflictingAppointment.rows.length > 0) {
             return res.status(400).json({ error: 'This time slot is already booked' });
         }
 
-        const result = await db.run(`
+        const result = await db.query(`
             INSERT INTO appointments (
                 userId, doctorId, hospitalId, appointmentType, appointmentDate, appointmentTime,
                 duration, status, notes, consultationFee, isTelemedicine, meetingLink
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, userId, doctorId, doctor.hospitalId, 'consultation', appointmentDate, appointmentTime,
-           duration, 'scheduled', notes || '', doctor.consultationFee, isTelemedicine, meetingLink || '');
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        `, [userId, doctorId, doctor.rows[0].hospitalId, 'consultation', appointmentDate, appointmentTime,
+           duration, 'scheduled', notes || '', doctor.rows[0].consultationFee, isTelemedicine, meetingLink || '']);
 
         res.status(201).json({
             success: true,
             message: 'Appointment booked successfully',
-            appointmentId: result.lastID
+            appointmentId: result.rows[0].id
         });
     } catch (error) {
         console.error('Failed to create appointment:', error);
@@ -730,40 +749,40 @@ app.post('/api/appointments', async (req, res) => {
         }
 
         // Get doctor details to get hospitalId and consultationFee
-        const doctor = await db.get('SELECT hospitalId, consultationFee FROM doctors WHERE id = ?', doctorId);
-        if (!doctor) {
+        const doctor = await db.query('SELECT hospitalId, consultationFee FROM doctors WHERE id = $1', [doctorId]);
+        if (doctor.rows.length === 0) {
             return res.status(404).json({ error: 'Doctor not found' });
         }
 
         // Check if doctor is available
-        if (!doctor.isAvailable) {
+        if (!doctor.rows[0].isAvailable) {
             return res.status(400).json({ error: 'Doctor is not currently available' });
         }
 
         // Check for conflicting appointments
-        const conflictingAppointment = await db.get(`
+        const conflictingAppointment = await db.query(`
             SELECT id FROM appointments
-            WHERE doctorId = ? AND appointmentDate = ? AND appointmentTime = ? AND status NOT IN ('cancelled', 'completed')
-        `, doctorId, appointmentDate, appointmentTime);
+            WHERE doctorId = $1 AND appointmentDate = $2 AND appointmentTime = $3 AND status NOT IN ('cancelled', 'completed')
+        `, [doctorId, appointmentDate, appointmentTime]);
 
-        if (conflictingAppointment) {
+        if (conflictingAppointment.rows.length > 0) {
             return res.status(400).json({ error: 'This time slot is already booked' });
         }
 
         const userId = 1; // Default user for testing
 
-        const result = await db.run(`
+        const result = await db.query(`
             INSERT INTO appointments (
                 userId, doctorId, hospitalId, appointmentType, appointmentDate, appointmentTime,
                 duration, status, notes, consultationFee, isTelemedicine, meetingLink
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, userId, doctorId, doctor.hospitalId, 'consultation', appointmentDate, appointmentTime,
-           duration, 'scheduled', notes || '', doctor.consultationFee, isTelemedicine, meetingLink || '');
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        `, [userId, doctorId, doctor.rows[0].hospitalId, 'consultation', appointmentDate, appointmentTime,
+           duration, 'scheduled', notes || '', doctor.rows[0].consultationFee, isTelemedicine, meetingLink || '']);
 
         res.status(201).json({
             success: true,
             message: 'Appointment booked successfully',
-            appointmentId: result.lastID
+            appointmentId: result.rows[0].id
         });
     } catch (error) {
         console.error('Failed to create appointment:', error);
@@ -774,7 +793,8 @@ app.post('/api/appointments', async (req, res) => {
 // GET /api/specialties - Fetch all medical specialties
 app.get('/api/specialties', async (req, res) => {
     try {
-        const specialties = await db.all('SELECT id, name, description, icon, category FROM medical_specialties WHERE isActive = 1 ORDER BY name');
+        const result = await db.query('SELECT id, name, description, icon, category FROM medical_specialties WHERE isActive = true ORDER BY name');
+        const specialties = result.rows;
         res.json(specialties);
     } catch (error) {
         console.error('Failed to fetch specialties:', error);
@@ -831,24 +851,24 @@ app.get('/api/travel-info', (req, res) => {
 app.get('/api/statistics', async (req, res) => {
     try {
         // Get total successful treatments (completed appointments)
-        const treatmentsResult = await db.get(`
+        const treatmentsResult = await db.query(`
             SELECT COUNT(*) as count FROM appointments
             WHERE status = 'completed'
         `);
 
         // Get total partner hospitals
-        const hospitalsResult = await db.get(`
+        const hospitalsResult = await db.query(`
             SELECT COUNT(*) as count FROM hospitals
         `);
 
         // Get total registered patients
-        const patientsResult = await db.get(`
+        const patientsResult = await db.query(`
             SELECT COUNT(*) as count FROM users
             WHERE role = 'patient'
         `);
 
         // Get success rate and total savings from published testimonials
-        const testimonialsResult = await db.get(`
+        const testimonialsResult = await db.query(`
             SELECT
                 COUNT(*) as totalTestimonials,
                 AVG(rating) as averageRating,
@@ -860,31 +880,31 @@ app.get('/api/statistics', async (req, res) => {
         console.log('Testimonials result:', testimonialsResult);
 
         // Get total expert doctors
-        const doctorsResult = await db.get(`
+        const doctorsResult = await db.query(`
             SELECT COUNT(*) as count FROM doctors
             WHERE isAvailable = TRUE
         `);
 
         // Get total patient coordinators
-        const coordinatorsResult = await db.get(`
+        const coordinatorsResult = await db.query(`
             SELECT COUNT(*) as count FROM patient_coordinators
             WHERE isAvailable = TRUE
         `);
 
         // Calculate success rate (convert to percentage)
-        const successRate = testimonialsResult.totalTestimonials > 0
-            ? Math.round((testimonialsResult.averageRating || 0) * 20) // Convert 4.8 rating to 96%
+        const successRate = testimonialsResult.rows[0].totaltestimonials > 0
+            ? Math.round((testimonialsResult.rows[0].averagerating || 0) * 20) // Convert 4.8 rating to 96%
             : 98.5; // Default fallback
 
         const statistics = {
-            successfulTreatments: treatmentsResult.count || 2500,
-            partnerHospitals: hospitalsResult.count || 150,
-            registeredPatients: patientsResult.count || 2500,
+            successfulTreatments: treatmentsResult.rows[0].count || 2500,
+            partnerHospitals: hospitalsResult.rows[0].count || 150,
+            registeredPatients: patientsResult.rows[0].count || 2500,
             successRate: successRate,
-            expertDoctors: doctorsResult.count || 500,
-            patientCoordinators: coordinatorsResult.count || 50,
+            expertDoctors: doctorsResult.rows[0].count || 500,
+            patientCoordinators: coordinatorsResult.rows[0].count || 50,
             supportAvailable: '24/7',
-            totalSavings: testimonialsResult.totalSavings || 2800000
+            totalSavings: testimonialsResult.rows[0].totalsavings || 2800000
         };
 
         res.json(statistics);
@@ -903,9 +923,9 @@ app.post('/api/inquiries', async (req, res) => {
 
     try {
         const submittedAt = new Date().toISOString();
-        const result = await db.run(
-            'INSERT INTO inquiries (hospitalName, patientName, patientEmail, message, submittedAt) VALUES (?, ?, ?, ?, ?)',
-            hospitalName, patientName, patientEmail, message, submittedAt
+        const result = await db.query(
+            'INSERT INTO inquiries (hospitalName, patientName, patientEmail, message, submittedAt) VALUES ($1, $2, $3, $4, $5)',
+            [hospitalName, patientName, patientEmail, message, submittedAt]
         );
         res.status(201).json({ success: true, id: result.lastID });
     } catch (error) {
@@ -917,7 +937,8 @@ app.post('/api/inquiries', async (req, res) => {
 // GET /api/inquiries - Fetch all inquiries for admin dashboard
 app.get('/api/inquiries', async (req, res) => {
     try {
-        const inquiries = await db.all('SELECT * FROM inquiries ORDER BY submittedAt DESC');
+        const result = await db.query('SELECT * FROM inquiries ORDER BY submittedAt DESC');
+        const inquiries = result.rows;
         res.json(inquiries);
     } catch (error) {
         console.error('Failed to fetch inquiries:', error);
@@ -937,21 +958,19 @@ app.post('/api/hospitals/:id/ratings', async (req, res) => {
     try {
         await db.exec('BEGIN TRANSACTION');
 
-        const hospital = await db.get('SELECT averageRating, ratingCount FROM hospitals WHERE id = ?', hospitalId);
-        if (!hospital) {
+        const hospital = await db.query('SELECT averageRating, ratingCount FROM hospitals WHERE id = $1', [hospitalId]);
+        if (hospital.rows.length === 0) {
             await db.exec('ROLLBACK');
             return res.status(404).json({ error: 'Hospital not found' });
         }
 
-        const { averageRating, ratingCount } = hospital;
-        const newRatingCount = ratingCount + 1;
-        const newAverageRating = ((averageRating * ratingCount) + rating) / newRatingCount;
+        const { averagerating, ratingcount } = hospital.rows[0];
+        const newRatingCount = ratingcount + 1;
+        const newAverageRating = ((averagerating * ratingcount) + rating) / newRatingCount;
 
-        await db.run(
-            'UPDATE hospitals SET averageRating = ?, ratingCount = ? WHERE id = ?',
-            newAverageRating,
-            newRatingCount,
-            hospitalId
+        await db.query(
+            'UPDATE hospitals SET averageRating = $1, ratingCount = $2 WHERE id = $3',
+            [newAverageRating, newRatingCount, hospitalId]
         );
         
         await db.exec('COMMIT');
@@ -973,8 +992,8 @@ app.post('/api/auth/register', validateRegistration, checkValidation, async (req
         const { email, password, firstName, lastName, phone, dateOfBirth, country } = req.body;
 
         // Check if user already exists
-        const existingUser = await db.get('SELECT id FROM users WHERE email = ?', email);
-        if (existingUser) {
+        const existingUser = await db.query('SELECT id FROM users WHERE email = $1', [email]);
+        if (existingUser.rows.length > 0) {
             return res.status(400).json({ error: 'User with this email already exists' });
         }
 
@@ -982,19 +1001,19 @@ app.post('/api/auth/register', validateRegistration, checkValidation, async (req
         const hashedPassword = await hashPassword(password);
 
         // Create user
-        const result = await db.run(
-            `INSERT INTO users (email, password, firstName, lastName, phone, dateOfBirth, country, createdAt, updatedAt)
-             VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
-            email, hashedPassword, firstName, lastName, phone || null, dateOfBirth || null, country || null
+        const result = await db.query(
+            `INSERT INTO users (email, password_hash, firstName, lastName, phone, dateOfBirth, country, createdAt, updatedAt)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+            [email, hashedPassword, firstName, lastName, phone || null, dateOfBirth || null, country || null]
         );
 
         // Generate token
         const token = generateToken(result.lastID, email, 'patient');
 
         // Return user data (without password)
-        const user = await db.get(
-            'SELECT id, email, firstName, lastName, phone, dateOfBirth, country, role, isVerified, createdAt FROM users WHERE id = ?',
-            result.lastID
+        const user = await db.query(
+            'SELECT id, email, firstName, lastName, phone, dateOfBirth, country, role, isVerified, createdAt FROM users WHERE id = $1',
+            [result.rows[0].id]
         );
 
         res.status(201).json({
@@ -1016,22 +1035,22 @@ app.post('/api/auth/login', validateLogin, checkValidation, async (req, res) => 
         const { email, password } = req.body;
 
         // Find user
-        const user = await db.get('SELECT * FROM users WHERE email = ?', email);
-        if (!user) {
+        const user = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+        if (user.rows.length === 0) {
             return res.status(401).json({ error: 'Invalid email or password' });
         }
 
         // Check password
-        const isValidPassword = await comparePassword(password, user.password);
+        const isValidPassword = await comparePassword(password, user.rows[0].password_hash);
         if (!isValidPassword) {
             return res.status(401).json({ error: 'Invalid email or password' });
         }
 
         // Generate token
-        const token = generateToken(user.id, user.email, user.role);
+        const token = generateToken(user.rows[0].id, user.rows[0].email, user.rows[0].role);
 
         // Return user data (without password)
-        const { password: _, ...userWithoutPassword } = user;
+        const { password_hash: _, ...userWithoutPassword } = user.rows[0];
 
         res.json({
             success: true,
@@ -1049,16 +1068,16 @@ app.post('/api/auth/login', validateLogin, checkValidation, async (req, res) => 
 // GET /api/auth/profile - Get user profile (protected route)
 app.get('/api/auth/profile', authenticateToken, async (req, res) => {
     try {
-        const user = await db.get(
-            'SELECT id, email, firstName, lastName, phone, dateOfBirth, country, role, isVerified, createdAt FROM users WHERE id = ?',
-            req.user.userId
+        const user = await db.query(
+            'SELECT id, email, firstName, lastName, phone, dateOfBirth, country, role, isVerified, createdAt FROM users WHERE id = $1',
+            [req.user.userId]
         );
 
-        if (!user) {
+        if (user.rows.length === 0) {
             return res.status(404).json({ error: 'User not found' });
         }
 
-        res.json({ user });
+        res.json({ user: user.rows[0] });
 
     } catch (error) {
         console.error('Profile fetch error:', error);
@@ -1072,22 +1091,22 @@ app.put('/api/auth/profile', authenticateToken, async (req, res) => {
         const { firstName, lastName, phone, dateOfBirth, country } = req.body;
         const userId = req.user.userId;
 
-        await db.run(
-            `UPDATE users SET firstName = ?, lastName = ?, phone = ?, dateOfBirth = ?, country = ?, updatedAt = datetime('now')
-             WHERE id = ?`,
-            firstName, lastName, phone || null, dateOfBirth || null, country || null, userId
+        await db.query(
+            `UPDATE users SET firstName = $1, lastName = $2, phone = $3, dateOfBirth = $4, country = $5, updatedAt = CURRENT_TIMESTAMP
+             WHERE id = $6`,
+            [firstName, lastName, phone || null, dateOfBirth || null, country || null, userId]
         );
 
         // Return updated user data
-        const user = await db.get(
-            'SELECT id, email, firstName, lastName, phone, dateOfBirth, country, role, isVerified, createdAt FROM users WHERE id = ?',
-            userId
+        const user = await db.query(
+            'SELECT id, email, firstName, lastName, phone, dateOfBirth, country, role, isVerified, createdAt FROM users WHERE id = $1',
+            [userId]
         );
 
         res.json({
             success: true,
             message: 'Profile updated successfully',
-            user
+            user: user.rows[0]
         });
 
     } catch (error) {
@@ -1111,13 +1130,13 @@ app.post('/api/auth/change-password', authenticateToken, async (req, res) => {
         }
 
         // Get current user
-        const user = await db.get('SELECT password FROM users WHERE id = ?', userId);
-        if (!user) {
+        const user = await db.query('SELECT password_hash FROM users WHERE id = $1', [userId]);
+        if (user.rows.length === 0) {
             return res.status(404).json({ error: 'User not found' });
         }
 
         // Verify current password
-        const isValidPassword = await comparePassword(currentPassword, user.password);
+        const isValidPassword = await comparePassword(currentPassword, user.rows[0].password_hash);
         if (!isValidPassword) {
             return res.status(401).json({ error: 'Current password is incorrect' });
         }
@@ -1126,9 +1145,9 @@ app.post('/api/auth/change-password', authenticateToken, async (req, res) => {
         const hashedNewPassword = await hashPassword(newPassword);
 
         // Update password
-        await db.run(
-            'UPDATE users SET password = ?, updatedAt = datetime(\'now\') WHERE id = ?',
-            hashedNewPassword, userId
+        await db.query(
+            'UPDATE users SET password_hash = $1, updatedAt = CURRENT_TIMESTAMP WHERE id = $2',
+            [hashedNewPassword, userId]
         );
 
         res.json({
@@ -1147,7 +1166,8 @@ app.post('/api/auth/change-password', authenticateToken, async (req, res) => {
 // GET /api/specialties - Fetch all medical specialties
 app.get('/api/specialties', async (req, res) => {
     try {
-        const specialties = await db.all('SELECT * FROM medical_specialties WHERE isActive = TRUE ORDER BY name');
+        const result = await db.query('SELECT * FROM medical_specialties WHERE isActive = TRUE ORDER BY name');
+        const specialties = result.rows;
         res.json(specialties);
     } catch (error) {
         console.error('Failed to fetch specialties:', error);
@@ -1207,7 +1227,8 @@ app.get('/api/doctors', async (req, res) => {
         query += ' ORDER BY d.rating DESC, d.experience DESC LIMIT ?';
         params.push(parseInt(limit));
 
-        const doctors = await db.all(query, ...params);
+        const result = await db.query(query, params);
+        const doctors = result.rows;
         
         // Parse JSON fields
         doctors.forEach(doctor => {
@@ -1233,13 +1254,14 @@ app.get('/api/doctors', async (req, res) => {
 app.get('/api/doctors/:id', async (req, res) => {
     try {
         const doctorId = parseInt(req.params.id);
-        const doctor = await db.get(`
+        const result = await db.query(`
             SELECT d.*, h.name as hospitalName, h.city, h.state, ms.name as specialtyName
             FROM doctors d
             JOIN hospitals h ON d.hospitalId = h.id
             JOIN medical_specialties ms ON d.specialtyId = ms.id
-            WHERE d.id = ?
-        `, doctorId);
+            WHERE d.id = $1
+        `, [doctorId]);
+        const doctor = result.rows[0];
 
         if (!doctor) {
             return res.status(404).json({ error: 'Doctor not found' });
@@ -1257,11 +1279,12 @@ app.get('/api/doctors/:id', async (req, res) => {
         }
 
         // Get doctor reviews
-        const reviews = await db.all(`
+        const reviewResult = await db.query(`
             SELECT * FROM doctor_reviews
-            WHERE doctorId = ? AND isVerified = TRUE
+            WHERE doctorId = $1 AND isVerified = TRUE
             ORDER BY createdAt DESC LIMIT 10
-        `, doctorId);
+        `, [doctorId]);
+        const reviews = reviewResult.rows;
 
         doctor.reviews = reviews;
         res.json(doctor);
@@ -1358,7 +1381,8 @@ app.get('/api/search/hospitals', async (req, res) => {
         query += ' LIMIT ?';
         params.push(parseInt(limit));
 
-        const hospitals = await db.all(query, ...params);
+        const result = await db.query(query, params);
+        const hospitals = result.rows;
 
         // Parse JSON fields
         hospitals.forEach(hospital => {
@@ -1462,8 +1486,8 @@ app.post('/api/doctors/:id/reviews', optionalAuth, async (req, res) => {
         }
 
         // Check if doctor exists
-        const doctor = await db.get('SELECT id FROM doctors WHERE id = ?', doctorId);
-        if (!doctor) {
+        const doctor = await db.query('SELECT id FROM doctors WHERE id = $1', [doctorId]);
+        if (doctor.rows.length === 0) {
             return res.status(404).json({ error: 'Doctor not found' });
         }
 
@@ -1515,8 +1539,8 @@ app.post('/api/appointments', authenticateToken, async (req, res) => {
         }
 
         // Check if doctor exists and get consultation fee
-        const doctor = await db.get('SELECT consultationFee FROM doctors WHERE id = ?', doctorId);
-        if (!doctor) {
+        const doctor = await db.query('SELECT consultationFee FROM doctors WHERE id = $1', [doctorId]);
+        if (doctor.rows.length === 0) {
             return res.status(404).json({ error: 'Doctor not found' });
         }
 
@@ -1545,7 +1569,7 @@ app.post('/api/appointments', authenticateToken, async (req, res) => {
             success: true,
             message: 'Appointment booked successfully',
             appointmentId: result.lastID,
-            consultationFee: doctor.consultationFee
+            consultationFee: doctor.rows[0].consultationFee
         });
 
     } catch (error) {
@@ -2394,14 +2418,23 @@ app.get('*', (req, res) => {
 
 // --- Error Handling Middleware ---
 app.use((error, req, res, next) => {
+    console.error('Error occurred:', {
+        message: error.message,
+        stack: error.stack,
+        url: req.url,
+        method: req.method,
+        ip: req.ip,
+        timestamp: new Date().toISOString()
+    });
+
     if (error.code === 'LIMIT_FILE_SIZE') {
         return res.status(400).json({
-            error: 'File too large. Maximum file size is 5MB per image.'
+            error: `File too large. Maximum file size is ${parseInt(process.env.MAX_FILE_SIZE) / (1024 * 1024)}MB per image.`
         });
     }
     if (error.message && error.message.includes('Only image files')) {
         return res.status(400).json({
-            error: 'Only image files (JPG, PNG, GIF, WebP, BMP, TIFF) are allowed.'
+            error: 'Only image files (JPG, PNG, GIF, WebP) are allowed.'
         });
     }
     if (error.name === 'MulterError') {
@@ -2409,10 +2442,60 @@ app.use((error, req, res, next) => {
             error: 'File upload error: ' + error.message
         });
     }
-    next(error);
+
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+        return res.status(400).json({
+            error: 'Validation error',
+            details: error.message
+        });
+    }
+
+    // Handle database errors
+    if (error.code && error.code.startsWith('23')) { // PostgreSQL constraint violations
+        return res.status(400).json({
+            error: 'Database constraint violation',
+            details: error.message
+        });
+    }
+
+    // Default error response
+    res.status(error.status || 500).json({
+        error: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message,
+        ...(process.env.NODE_ENV !== 'production' && { stack: error.stack })
+    });
+});
+
+// --- Health Check Endpoint ---
+app.get('/health', (req, res) => {
+    res.status(200).json({
+        status: 'healthy',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        environment: process.env.NODE_ENV || 'development'
+    });
 });
 
 // --- Start Server ---
-app.listen(port, () => {
+const server = app.listen(port, () => {
     console.log(`AfyaConnect server is running on http://localhost:${port}`);
+    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`Health check: http://localhost:${port}/health`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+    console.log('SIGTERM received, shutting down gracefully');
+    server.close(() => {
+        console.log('Process terminated');
+        process.exit(0);
+    });
+});
+
+process.on('SIGINT', () => {
+    console.log('SIGINT received, shutting down gracefully');
+    server.close(() => {
+        console.log('Process terminated');
+        process.exit(0);
+    });
 });

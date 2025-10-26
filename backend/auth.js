@@ -4,11 +4,11 @@ import { body, validationResult } from 'express-validator';
 
 // JWT Secret - In production, this should be in environment variables
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
-const JWT_EXPIRES_IN = '7d';
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
 
 // Hash password
 export async function hashPassword(password) {
-    const saltRounds = 12;
+    const saltRounds = parseInt(process.env.BCRYPT_ROUNDS) || 12;
     return await bcrypt.hash(password, saltRounds);
 }
 

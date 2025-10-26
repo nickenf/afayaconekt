@@ -1,19 +1,29 @@
-import sqlite3 from 'sqlite3';
-import { open } from 'sqlite';
+import pkg from 'pg';
+const { Pool } = pkg;
 import { MOCK_HOSPITAL_DETAILS } from './mock-data.js';
 
 // This function will initialize the database connection and schema
 export async function initializeDatabase() {
     try {
-        const db = await open({
-            filename: './afyaconnect.db',
-            driver: sqlite3.Database
+        const db = new Pool({
+            host: process.env.DB_HOST || 'localhost',
+            port: process.env.DB_PORT || 5432,
+            database: process.env.DB_NAME || 'afyaconnect',
+            user: process.env.DB_USER || 'postgres',
+            password: process.env.DB_PASSWORD || '',
+            max: 20,
+            idleTimeoutMillis: 30000,
+            connectionTimeoutMillis: 2000,
         });
 
+        // Test the connection
+        await db.query('SELECT NOW()');
+        console.log('PostgreSQL database connected successfully');
+
         // Create the hospitals table with enhanced medical tourism fields
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS hospitals (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL UNIQUE,
                 specialties TEXT,
                 imageUrl TEXT,
@@ -56,28 +66,28 @@ export async function initializeDatabase() {
                 wifiAvailable BOOLEAN DEFAULT TRUE,
                 parkingAvailable BOOLEAN DEFAULT TRUE,
                 disabilityAccessible BOOLEAN DEFAULT TRUE,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updatedAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )
         `);
 
         // Create medical specialties table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS medical_specialties (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL UNIQUE,
                 description TEXT,
                 icon TEXT,
                 category TEXT,
                 isActive BOOLEAN DEFAULT TRUE,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )
         `);
 
         // Create doctors table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS doctors (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 hospitalId INTEGER NOT NULL,
                 firstName TEXT NOT NULL,
                 lastName TEXT NOT NULL,
@@ -99,17 +109,17 @@ export async function initializeDatabase() {
                 licenseNumber TEXT,
                 awards TEXT,
                 publications TEXT,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updatedAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (hospitalId) REFERENCES hospitals (id),
                 FOREIGN KEY (specialtyId) REFERENCES medical_specialties (id)
             )
         `);
 
         // Create treatments table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS treatments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
                 specialtyId INTEGER NOT NULL,
                 description TEXT,
@@ -122,15 +132,15 @@ export async function initializeDatabase() {
                 preparationRequired TEXT,
                 followUpRequired TEXT,
                 isActive BOOLEAN DEFAULT TRUE,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (specialtyId) REFERENCES medical_specialties (id)
             )
         `);
 
         // Create hospital_treatments junction table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS hospital_treatments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 hospitalId INTEGER NOT NULL,
                 treatmentId INTEGER NOT NULL,
                 cost REAL,
@@ -138,7 +148,7 @@ export async function initializeDatabase() {
                 isAvailable BOOLEAN DEFAULT TRUE,
                 waitingTime TEXT,
                 successRate REAL,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (hospitalId) REFERENCES hospitals (id),
                 FOREIGN KEY (treatmentId) REFERENCES treatments (id),
                 UNIQUE(hospitalId, treatmentId)
@@ -146,9 +156,9 @@ export async function initializeDatabase() {
         `);
 
         // Create doctor reviews table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS doctor_reviews (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 doctorId INTEGER NOT NULL,
                 userId INTEGER,
                 patientName TEXT NOT NULL,
@@ -158,31 +168,31 @@ export async function initializeDatabase() {
                 visitDate TEXT,
                 isVerified BOOLEAN DEFAULT FALSE,
                 isAnonymous BOOLEAN DEFAULT FALSE,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (doctorId) REFERENCES doctors (id),
                 FOREIGN KEY (userId) REFERENCES users (id)
             )
         `);
 
         // Create hospital amenities table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS hospital_amenities (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 hospitalId INTEGER NOT NULL,
                 amenityType TEXT NOT NULL,
                 amenityName TEXT NOT NULL,
                 description TEXT,
                 isAvailable BOOLEAN DEFAULT TRUE,
                 additionalCost REAL DEFAULT 0,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (hospitalId) REFERENCES hospitals (id)
             )
         `);
 
         // Create appointments table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS appointments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 userId INTEGER NOT NULL,
                 doctorId INTEGER NOT NULL,
                 hospitalId INTEGER NOT NULL,
@@ -196,8 +206,8 @@ export async function initializeDatabase() {
                 isTelemedicine BOOLEAN DEFAULT FALSE,
                 meetingLink TEXT,
                 reminderSent BOOLEAN DEFAULT FALSE,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updatedAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (userId) REFERENCES users (id),
                 FOREIGN KEY (doctorId) REFERENCES doctors (id),
                 FOREIGN KEY (hospitalId) REFERENCES hospitals (id)
@@ -205,9 +215,9 @@ export async function initializeDatabase() {
         `);
 
         // Create treatment plans table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS treatment_plans (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 userId INTEGER NOT NULL,
                 doctorId INTEGER NOT NULL,
                 hospitalId INTEGER NOT NULL,
@@ -224,8 +234,8 @@ export async function initializeDatabase() {
                 preOperativeInstructions TEXT,
                 postOperativeInstructions TEXT,
                 followUpRequired BOOLEAN DEFAULT TRUE,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updatedAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (userId) REFERENCES users (id),
                 FOREIGN KEY (doctorId) REFERENCES doctors (id),
                 FOREIGN KEY (hospitalId) REFERENCES hospitals (id),
@@ -234,16 +244,16 @@ export async function initializeDatabase() {
         `);
 
         // Create medical records table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS medical_records (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 userId INTEGER NOT NULL,
                 recordType TEXT NOT NULL,
                 fileName TEXT NOT NULL,
                 originalFileName TEXT NOT NULL,
                 fileSize INTEGER,
                 mimeType TEXT,
-                uploadDate TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                uploadDate TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 description TEXT,
                 isShared BOOLEAN DEFAULT FALSE,
                 sharedWith TEXT,
@@ -253,9 +263,9 @@ export async function initializeDatabase() {
         `);
 
         // Create consultation notes table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS consultation_notes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 appointmentId INTEGER NOT NULL,
                 doctorId INTEGER NOT NULL,
                 userId INTEGER NOT NULL,
@@ -266,8 +276,8 @@ export async function initializeDatabase() {
                 followUpDate TEXT,
                 followUpInstructions TEXT,
                 isConfidential BOOLEAN DEFAULT TRUE,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updatedAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (appointmentId) REFERENCES appointments (id),
                 FOREIGN KEY (doctorId) REFERENCES doctors (id),
                 FOREIGN KEY (userId) REFERENCES users (id)
@@ -275,9 +285,9 @@ export async function initializeDatabase() {
         `);
 
         // Create treatment milestones table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS treatment_milestones (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 treatmentPlanId INTEGER NOT NULL,
                 milestoneTitle TEXT NOT NULL,
                 description TEXT,
@@ -287,15 +297,15 @@ export async function initializeDatabase() {
                 notes TEXT,
                 isRequired BOOLEAN DEFAULT TRUE,
                 orderIndex INTEGER DEFAULT 0,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (treatmentPlanId) REFERENCES treatment_plans (id)
             )
         `);
 
         // Create second opinions table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS second_opinions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 userId INTEGER NOT NULL,
                 primaryDoctorId INTEGER,
                 secondOpinionDoctorId INTEGER NOT NULL,
@@ -307,7 +317,7 @@ export async function initializeDatabase() {
                 recommendedAction TEXT,
                 consultationFee REAL,
                 status TEXT NOT NULL DEFAULT 'requested',
-                requestDate TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                requestDate TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 responseDate TEXT,
                 isUrgent BOOLEAN DEFAULT FALSE,
                 FOREIGN KEY (userId) REFERENCES users (id),
@@ -317,9 +327,9 @@ export async function initializeDatabase() {
         `);
 
         // Create travel bookings table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS travel_bookings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 userId INTEGER NOT NULL,
                 appointmentId INTEGER,
                 treatmentPlanId INTEGER,
@@ -336,8 +346,8 @@ export async function initializeDatabase() {
                 confirmationNumber TEXT,
                 cancellationPolicy TEXT,
                 specialRequests TEXT,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updatedAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (userId) REFERENCES users (id),
                 FOREIGN KEY (appointmentId) REFERENCES appointments (id),
                 FOREIGN KEY (treatmentPlanId) REFERENCES treatment_plans (id)
@@ -345,9 +355,9 @@ export async function initializeDatabase() {
         `);
 
         // Create visa applications table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS visa_applications (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 userId INTEGER NOT NULL,
                 passportNumber TEXT NOT NULL,
                 passportExpiry TEXT NOT NULL,
@@ -366,16 +376,16 @@ export async function initializeDatabase() {
                 processingFee REAL,
                 notes TEXT,
                 assignedOfficer TEXT,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updatedAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (userId) REFERENCES users (id)
             )
         `);
 
         // Create accommodation options table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS accommodation_options (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 hospitalId INTEGER NOT NULL,
                 name TEXT NOT NULL,
                 type TEXT NOT NULL,
@@ -393,15 +403,15 @@ export async function initializeDatabase() {
                 website TEXT,
                 isPartner BOOLEAN DEFAULT FALSE,
                 isActive BOOLEAN DEFAULT TRUE,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (hospitalId) REFERENCES hospitals (id)
             )
         `);
 
         // Create accommodation rooms table (room types/packages for each accommodation)
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS accommodation_rooms (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 accommodationId INTEGER NOT NULL,
                 roomType TEXT NOT NULL,
                 description TEXT,
@@ -410,15 +420,15 @@ export async function initializeDatabase() {
                 currency TEXT DEFAULT 'USD',
                 amenities TEXT,
                 isAvailable BOOLEAN DEFAULT TRUE,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (accommodationId) REFERENCES accommodation_options (id)
             )
         `);
 
         // Create accommodation bookings table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS accommodation_bookings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 userId INTEGER,
                 guestName TEXT,
                 guestEmail TEXT,
@@ -434,8 +444,8 @@ export async function initializeDatabase() {
                 contactPhone TEXT,
                 emergencyContact TEXT,
                 adminNotes TEXT,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updatedAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (userId) REFERENCES users (id),
                 FOREIGN KEY (accommodationId) REFERENCES accommodation_options (id),
                 FOREIGN KEY (roomId) REFERENCES accommodation_rooms (id)
@@ -443,9 +453,9 @@ export async function initializeDatabase() {
         `);
 
         // Create transportation services table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS transportation_services (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 serviceType TEXT NOT NULL,
                 providerName TEXT NOT NULL,
                 description TEXT,
@@ -461,14 +471,14 @@ export async function initializeDatabase() {
                 isActive BOOLEAN DEFAULT TRUE,
                 rating REAL DEFAULT 0,
                 reviewCount INTEGER DEFAULT 0,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )
         `);
 
         // Create travel assistance requests table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS travel_assistance_requests (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 userId INTEGER NOT NULL,
                 requestType TEXT NOT NULL,
                 priority TEXT DEFAULT 'medium',
@@ -485,16 +495,16 @@ export async function initializeDatabase() {
                 completionDate TEXT,
                 rating INTEGER,
                 feedback TEXT,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updatedAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (userId) REFERENCES users (id)
             )
         `);
 
         // Create payments table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS payments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 userId INTEGER NOT NULL,
                 appointmentId INTEGER,
                 treatmentPlanId INTEGER,
@@ -514,8 +524,8 @@ export async function initializeDatabase() {
                 discountAmount REAL DEFAULT 0,
                 refundAmount REAL DEFAULT 0,
                 refundDate TEXT,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updatedAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (userId) REFERENCES users (id),
                 FOREIGN KEY (appointmentId) REFERENCES appointments (id),
                 FOREIGN KEY (treatmentPlanId) REFERENCES treatment_plans (id),
@@ -524,9 +534,9 @@ export async function initializeDatabase() {
         `);
 
         // Create insurance claims table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS insurance_claims (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 userId INTEGER NOT NULL,
                 appointmentId INTEGER,
                 treatmentPlanId INTEGER,
@@ -537,7 +547,7 @@ export async function initializeDatabase() {
                 approvedAmount REAL,
                 currency TEXT DEFAULT 'USD',
                 claimStatus TEXT NOT NULL DEFAULT 'submitted',
-                submissionDate TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                submissionDate TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 approvalDate TEXT,
                 rejectionReason TEXT,
                 documentsSubmitted TEXT,
@@ -548,8 +558,8 @@ export async function initializeDatabase() {
                 contactPhone TEXT,
                 contactEmail TEXT,
                 notes TEXT,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updatedAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (userId) REFERENCES users (id),
                 FOREIGN KEY (appointmentId) REFERENCES appointments (id),
                 FOREIGN KEY (treatmentPlanId) REFERENCES treatment_plans (id)
@@ -557,9 +567,9 @@ export async function initializeDatabase() {
         `);
 
         // Create financial packages table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS financial_packages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 packageName TEXT NOT NULL,
                 description TEXT,
                 packageType TEXT NOT NULL,
@@ -574,15 +584,15 @@ export async function initializeDatabase() {
                 termsAndConditions TEXT,
                 isActive BOOLEAN DEFAULT TRUE,
                 popularityScore INTEGER DEFAULT 0,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updatedAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )
         `);
 
         // Create medical loans table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS medical_loans (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 userId INTEGER NOT NULL,
                 treatmentPlanId INTEGER,
                 loanAmount REAL NOT NULL,
@@ -603,21 +613,21 @@ export async function initializeDatabase() {
                 creditScore INTEGER,
                 employmentVerification BOOLEAN DEFAULT FALSE,
                 incomeVerification BOOLEAN DEFAULT FALSE,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updatedAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (userId) REFERENCES users (id),
                 FOREIGN KEY (treatmentPlanId) REFERENCES treatment_plans (id)
             )
         `);
 
         // Create currency exchange rates table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS currency_rates (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 fromCurrency TEXT NOT NULL,
                 toCurrency TEXT NOT NULL,
                 exchangeRate REAL NOT NULL,
-                lastUpdated TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                lastUpdated TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 source TEXT DEFAULT 'manual',
                 isActive BOOLEAN DEFAULT TRUE,
                 UNIQUE(fromCurrency, toCurrency)
@@ -625,9 +635,9 @@ export async function initializeDatabase() {
         `);
 
         // Create financial transactions table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS financial_transactions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 userId INTEGER NOT NULL,
                 transactionType TEXT NOT NULL,
                 amount REAL NOT NULL,
@@ -635,19 +645,19 @@ export async function initializeDatabase() {
                 description TEXT,
                 referenceId TEXT,
                 status TEXT NOT NULL DEFAULT 'pending',
-                transactionDate TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                transactionDate TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 processedDate TEXT,
                 failureReason TEXT,
                 metadata TEXT,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (userId) REFERENCES users (id)
             )
         `);
 
         // Create support tickets table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS support_tickets (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 userId INTEGER NOT NULL,
                 ticketNumber TEXT NOT NULL UNIQUE,
                 subject TEXT NOT NULL,
@@ -660,17 +670,17 @@ export async function initializeDatabase() {
                 resolution TEXT,
                 satisfactionRating INTEGER,
                 feedback TEXT,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updatedAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 resolvedAt TEXT,
                 FOREIGN KEY (userId) REFERENCES users (id)
             )
         `);
 
         // Create support messages table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS support_messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 ticketId INTEGER NOT NULL,
                 senderId INTEGER,
                 senderType TEXT NOT NULL,
@@ -680,16 +690,16 @@ export async function initializeDatabase() {
                 attachments TEXT,
                 isRead BOOLEAN DEFAULT FALSE,
                 readAt TEXT,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (ticketId) REFERENCES support_tickets (id),
                 FOREIGN KEY (senderId) REFERENCES users (id)
             )
         `);
 
         // Create patient coordinators table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS patient_coordinators (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 firstName TEXT NOT NULL,
                 lastName TEXT NOT NULL,
                 email TEXT NOT NULL UNIQUE,
@@ -704,25 +714,25 @@ export async function initializeDatabase() {
                 timeZone TEXT DEFAULT 'Asia/Kolkata',
                 profileImage TEXT,
                 biography TEXT,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updatedAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )
         `);
 
         // Create coordinator assignments table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS coordinator_assignments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 userId INTEGER NOT NULL,
                 coordinatorId INTEGER NOT NULL,
                 appointmentId INTEGER,
                 treatmentPlanId INTEGER,
                 assignmentType TEXT NOT NULL,
-                assignmentDate TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                assignmentDate TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 status TEXT NOT NULL DEFAULT 'active',
                 notes TEXT,
                 endDate TEXT,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (userId) REFERENCES users (id),
                 FOREIGN KEY (coordinatorId) REFERENCES patient_coordinators (id),
                 FOREIGN KEY (appointmentId) REFERENCES appointments (id),
@@ -731,9 +741,9 @@ export async function initializeDatabase() {
         `);
 
         // Create notifications table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS notifications (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 userId INTEGER NOT NULL,
                 title TEXT NOT NULL,
                 message TEXT NOT NULL,
@@ -746,15 +756,15 @@ export async function initializeDatabase() {
                 actionText TEXT,
                 expiresAt TEXT,
                 metadata TEXT,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (userId) REFERENCES users (id)
             )
         `);
 
         // Create emergency contacts table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS emergency_contacts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 userId INTEGER NOT NULL,
                 contactType TEXT NOT NULL,
                 name TEXT NOT NULL,
@@ -765,16 +775,16 @@ export async function initializeDatabase() {
                 isPrimary BOOLEAN DEFAULT FALSE,
                 isActive BOOLEAN DEFAULT TRUE,
                 notes TEXT,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updatedAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (userId) REFERENCES users (id)
             )
         `);
 
         // Create user testimonials table
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS user_testimonials (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 userId INTEGER NOT NULL,
                 patientName TEXT NOT NULL,
                 patientCountry TEXT NOT NULL,
@@ -794,28 +804,28 @@ export async function initializeDatabase() {
                 isApproved BOOLEAN DEFAULT FALSE,
                 isPublished BOOLEAN DEFAULT FALSE,
                 tags TEXT,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updatedAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (userId) REFERENCES users (id)
             )
         `);
 
         // Create the inquiries table if it doesn't exist
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS inquiries (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 hospitalName TEXT NOT NULL,
                 patientName TEXT NOT NULL,
                 patientEmail TEXT NOT NULL,
                 message TEXT NOT NULL,
-                submittedAt TEXT NOT NULL
+                submittedAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )
         `);
 
         // Create the users table if it doesn't exist
-        await db.exec(`
+        await db.query(`
             CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 email TEXT NOT NULL UNIQUE,
                 password TEXT NOT NULL,
                 firstName TEXT NOT NULL,
@@ -825,32 +835,32 @@ export async function initializeDatabase() {
                 country TEXT,
                 role TEXT NOT NULL DEFAULT 'patient',
                 isVerified BOOLEAN DEFAULT FALSE,
-                createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                createdAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updatedAt TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )
         `);
 
 
         // Seed medical specialties first
         await seedMedicalSpecialties(db);
-        
+
         // Seed treatments
         await seedTreatments(db);
-        
+
         // Check if hospitals table is empty and seed
-        const hospitalCount = await db.get('SELECT COUNT(*) as count FROM hospitals');
-        if (hospitalCount.count === 0) {
+        const hospitalCount = await db.query('SELECT COUNT(*) as count FROM hospitals');
+        if (hospitalCount.rows[0].count === 0) {
             console.log('Database is empty. Seeding hospitals...');
             await seedHospitals(db);
             console.log('Hospitals seeded successfully.');
         }
-        
+
         // Seed doctors
         await seedDoctors(db);
-        
+
         // Seed accommodation options
         await seedAccommodationOptions(db);
-        
+
         // Seed transportation services
         await seedTransportationServices(db);
 
@@ -872,8 +882,8 @@ export async function initializeDatabase() {
 
 // Seed medical specialties
 async function seedMedicalSpecialties(db) {
-    const specialtyCount = await db.get('SELECT COUNT(*) as count FROM medical_specialties');
-    if (specialtyCount.count === 0) {
+    const specialtyCount = await db.query('SELECT COUNT(*) as count FROM medical_specialties');
+    if (specialtyCount.rows[0].count === 0) {
         console.log('Seeding medical specialties...');
         const specialties = [
             { name: 'Cardiology', description: 'Heart and cardiovascular system', icon: '❤️', category: 'Internal Medicine' },
@@ -890,21 +900,20 @@ async function seedMedicalSpecialties(db) {
             { name: 'Gynecology', description: 'Women\'s reproductive health', icon: '👩', category: 'General Medicine' }
         ];
 
-        const stmt = await db.prepare(
-            'INSERT INTO medical_specialties (name, description, icon, category) VALUES (?, ?, ?, ?)'
-        );
         for (const specialty of specialties) {
-            await stmt.run(specialty.name, specialty.description, specialty.icon, specialty.category);
+            await db.query(
+                'INSERT INTO medical_specialties (name, description, icon, category) VALUES ($1, $2, $3, $4)',
+                [specialty.name, specialty.description, specialty.icon, specialty.category]
+            );
         }
-        await stmt.finalize();
         console.log('Medical specialties seeded successfully.');
     }
 }
 
 // Seed treatments
 async function seedTreatments(db) {
-    const treatmentCount = await db.get('SELECT COUNT(*) as count FROM treatments');
-    if (treatmentCount.count === 0) {
+    const treatmentCount = await db.query('SELECT COUNT(*) as count FROM treatments');
+    if (treatmentCount.rows[0].count === 0) {
         console.log('Seeding treatments...');
         const treatments = [
             { name: 'Heart Bypass Surgery', specialtyId: 1, description: 'Coronary artery bypass surgery', duration: '4-6 hours', recoveryTime: '6-8 weeks', successRate: 95.0, riskLevel: 'moderate', averageCost: 8000, costRange: '$6,000 - $12,000' },
@@ -919,13 +928,12 @@ async function seedTreatments(db) {
             { name: 'IVF Treatment', specialtyId: 9, description: 'In vitro fertilization', duration: '2-3 weeks', recoveryTime: '2 weeks', successRate: 40.0, riskLevel: 'low', averageCost: 5000, costRange: '$3,000 - $8,000' }
         ];
 
-        const stmt = await db.prepare(
-            'INSERT INTO treatments (name, specialtyId, description, duration, recoveryTime, successRate, riskLevel, averageCost, costRange) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        );
         for (const treatment of treatments) {
-            await stmt.run(treatment.name, treatment.specialtyId, treatment.description, treatment.duration, treatment.recoveryTime, treatment.successRate, treatment.riskLevel, treatment.averageCost, treatment.costRange);
+            await db.query(
+                'INSERT INTO treatments (name, specialtyId, description, duration, recoveryTime, successRate, riskLevel, averageCost, costRange) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)',
+                [treatment.name, treatment.specialtyId, treatment.description, treatment.duration, treatment.recoveryTime, treatment.successRate, treatment.riskLevel, treatment.averageCost, treatment.costRange]
+            );
         }
-        await stmt.finalize();
         console.log('Treatments seeded successfully.');
     }
 }
@@ -1060,32 +1068,29 @@ async function seedHospitals(db) {
         }
     ];
 
-    const stmt = await db.prepare(`
-        INSERT INTO hospitals (
-            name, specialties, imageUrl, city, state, description, accreditations,
-            internationalPatientServices, gallery, establishedYear, bedCount, doctorCount,
-            nurseCount, languagesSpoken, contactPhone, contactEmail, website, address,
-            priceRange, insuranceAccepted, paymentMethods, accommodationPartners, dietaryServices
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
     for (const hospital of enhancedHospitals) {
-        await stmt.run(
+        await db.query(`
+            INSERT INTO hospitals (
+                name, specialties, imageUrl, city, state, description, accreditations,
+                internationalPatientServices, gallery, establishedYear, bedCount, doctorCount,
+                nurseCount, languagesSpoken, contactPhone, contactEmail, website, address,
+                priceRange, insuranceAccepted, paymentMethods, accommodationPartners, dietaryServices
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+        `, [
             hospital.name, hospital.specialties, hospital.imageUrl, hospital.city, hospital.state,
             hospital.description, hospital.accreditations, hospital.internationalPatientServices,
             hospital.gallery, hospital.establishedYear, hospital.bedCount, hospital.doctorCount,
             hospital.nurseCount, hospital.languagesSpoken, hospital.contactPhone, hospital.contactEmail,
             hospital.website, hospital.address, hospital.priceRange, hospital.insuranceAccepted,
             hospital.paymentMethods, hospital.accommodationPartners, hospital.dietaryServices
-        );
+        ]);
     }
-    await stmt.finalize();
 }
 
 // Seed doctors
 async function seedDoctors(db) {
-    const doctorCount = await db.get('SELECT COUNT(*) as count FROM doctors');
-    if (doctorCount.count === 0) {
+    const doctorCount = await db.query('SELECT COUNT(*) as count FROM doctors');
+    if (doctorCount.rows[0].count === 0) {
         console.log('Seeding doctors...');
         const doctors = [
             {
@@ -1122,29 +1127,26 @@ async function seedDoctors(db) {
             }
         ];
 
-        const stmt = await db.prepare(`
-            INSERT INTO doctors (
-                hospitalId, firstName, lastName, specialtyId, qualifications, experience,
-                imageUrl, biography, languagesSpoken, consultationFee, rating, reviewCount
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-
         for (const doctor of doctors) {
-            await stmt.run(
+            await db.query(`
+                INSERT INTO doctors (
+                    hospitalId, firstName, lastName, specialtyId, qualifications, experience,
+                    imageUrl, biography, languagesSpoken, consultationFee, rating, reviewCount
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            `, [
                 doctor.hospitalId, doctor.firstName, doctor.lastName, doctor.specialtyId,
                 doctor.qualifications, doctor.experience, doctor.imageUrl, doctor.biography,
                 doctor.languagesSpoken, doctor.consultationFee, doctor.rating, doctor.reviewCount
-            );
+            ]);
         }
-        await stmt.finalize();
         console.log('Doctors seeded successfully.');
     }
 }
 
 // Seed accommodation options
 async function seedAccommodationOptions(db) {
-    const accommodationCount = await db.get('SELECT COUNT(*) as count FROM accommodation_options');
-    if (accommodationCount.count === 0) {
+    const accommodationCount = await db.query('SELECT COUNT(*) as count FROM accommodation_options');
+    if (accommodationCount.rows[0].count === 0) {
         console.log('Seeding accommodation options...');
         const accommodations = [
             {
@@ -1189,32 +1191,29 @@ async function seedAccommodationOptions(db) {
             }
         ];
 
-        const stmt = await db.prepare(`
-            INSERT INTO accommodation_options (
-                hospitalId, name, type, description, address, distanceFromHospital,
-                pricePerNight, amenities, images, rating, reviewCount,
-                contactPhone, contactEmail, isPartner
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-
         for (const accommodation of accommodations) {
-            await stmt.run(
+            await db.query(`
+                INSERT INTO accommodation_options (
+                    hospitalId, name, type, description, address, distanceFromHospital,
+                    pricePerNight, amenities, images, rating, reviewCount,
+                    contactPhone, contactEmail, isPartner
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            `, [
                 accommodation.hospitalId, accommodation.name, accommodation.type,
                 accommodation.description, accommodation.address, accommodation.distanceFromHospital,
                 accommodation.pricePerNight, accommodation.amenities, accommodation.images,
                 accommodation.rating, accommodation.reviewCount, accommodation.contactPhone,
                 accommodation.contactEmail, accommodation.isPartner
-            );
+            ]);
         }
-        await stmt.finalize();
         console.log('Accommodation options seeded successfully.');
     }
 }
 
 // Seed accommodation rooms
 async function seedAccommodationRooms(db) {
-    const roomCount = await db.get('SELECT COUNT(*) as count FROM accommodation_rooms');
-    if (roomCount.count === 0) {
+    const roomCount = await db.query('SELECT COUNT(*) as count FROM accommodation_rooms');
+    if (roomCount.rows[0].count === 0) {
         console.log('Seeding accommodation rooms...');
         const roomTypes = [
             // Taj Coromandel Chennai (accommodationId: 1)
@@ -1286,28 +1285,25 @@ async function seedAccommodationRooms(db) {
             }
         ];
 
-        const stmt = await db.prepare(`
-            INSERT INTO accommodation_rooms (
-                accommodationId, roomType, description, maxOccupancy,
-                pricePerNight, currency, amenities
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        `);
-
         for (const room of roomTypes) {
-            await stmt.run(
+            await db.query(`
+                INSERT INTO accommodation_rooms (
+                    accommodationId, roomType, description, maxOccupancy,
+                    pricePerNight, currency, amenities
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+            `, [
                 room.accommodationId, room.roomType, room.description,
                 room.maxOccupancy, room.pricePerNight, room.currency, room.amenities
-            );
+            ]);
         }
-        await stmt.finalize();
         console.log('Accommodation rooms seeded successfully.');
     }
 }
 
 // Seed transportation services
 async function seedTransportationServices(db) {
-    const transportCount = await db.get('SELECT COUNT(*) as count FROM transportation_services');
-    if (transportCount.count === 0) {
+    const transportCount = await db.query('SELECT COUNT(*) as count FROM transportation_services');
+    if (transportCount.rows[0].count === 0) {
         console.log('Seeding transportation services...');
         const transportServices = [
             {
@@ -1339,31 +1335,28 @@ async function seedTransportationServices(db) {
             }
         ];
 
-        const stmt = await db.prepare(`
-            INSERT INTO transportation_services (
-                serviceType, providerName, description, vehicleType, capacity,
-                amenities, pricePerKm, minimumCharge, coverage, contactPhone,
-                contactEmail, rating, reviewCount
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-
         for (const service of transportServices) {
-            await stmt.run(
+            await db.query(`
+                INSERT INTO transportation_services (
+                    serviceType, providerName, description, vehicleType, capacity,
+                    amenities, pricePerKm, minimumCharge, coverage, contactPhone,
+                    contactEmail, rating, reviewCount
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            `, [
                 service.serviceType, service.providerName, service.description,
                 service.vehicleType, service.capacity, service.amenities,
                 service.pricePerKm, service.minimumCharge, service.coverage,
                 service.contactPhone, service.contactEmail, service.rating, service.reviewCount
-            );
+            ]);
         }
-        await stmt.finalize();
         console.log('Transportation services seeded successfully.');
     }
 }
 
 // Seed patient coordinators
 async function seedPatientCoordinators(db) {
-    const coordinatorCount = await db.get('SELECT COUNT(*) as count FROM patient_coordinators');
-    if (coordinatorCount.count === 0) {
+    const coordinatorCount = await db.query('SELECT COUNT(*) as count FROM patient_coordinators');
+    if (coordinatorCount.rows[0].count === 0) {
         console.log('Seeding patient coordinators...');
         const coordinators = [
             {
@@ -1395,32 +1388,29 @@ async function seedPatientCoordinators(db) {
             },
         ];
 
-        const stmt = await db.prepare(`
-            INSERT INTO patient_coordinators (
-                firstName, lastName, email, phone, specialization, languagesSpoken,
-                experience, rating, reviewCount, workingHours, timeZone,
-                profileImage, biography
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-
         for (const coordinator of coordinators) {
-            await stmt.run(
+            await db.query(`
+                INSERT INTO patient_coordinators (
+                    firstName, lastName, email, phone, specialization, languagesSpoken,
+                    experience, rating, reviewCount, workingHours, timeZone,
+                    profileImage, biography
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            `, [
                 coordinator.firstName, coordinator.lastName, coordinator.email,
                 coordinator.phone, coordinator.specialization, coordinator.languagesSpoken,
                 coordinator.experience, coordinator.rating, coordinator.reviewCount,
                 coordinator.workingHours, coordinator.timeZone, coordinator.profileImage,
                 coordinator.biography
-            );
+            ]);
         }
-        await stmt.finalize();
         console.log('Patient coordinators seeded successfully.');
     }
 }
 
 // Seed sample testimonials
 async function seedTestimonials(db) {
-    const testimonialCount = await db.get('SELECT COUNT(*) as count FROM user_testimonials');
-    if (testimonialCount.count === 0) {
+    const testimonialCount = await db.query('SELECT COUNT(*) as count FROM user_testimonials');
+    if (testimonialCount.rows[0].count === 0) {
         console.log('Seeding sample testimonials...');
         const testimonials = [
             {
@@ -1515,25 +1505,22 @@ async function seedTestimonials(db) {
             }
         ];
 
-        const stmt = await db.prepare(`
-            INSERT INTO user_testimonials (
-                userId, patientName, patientCountry, patientAge, treatmentType,
-                hospitalName, doctorName, rating, testimonialText, treatmentDate,
-                treatmentDuration, costSaved, isVerified, isApproved, isPublished, tags
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-
         for (const testimonial of testimonials) {
-            await stmt.run(
+            await db.query(`
+                INSERT INTO user_testimonials (
+                    userId, patientName, patientCountry, patientAge, treatmentType,
+                    hospitalName, doctorName, rating, testimonialText, treatmentDate,
+                    treatmentDuration, costSaved, isVerified, isApproved, isPublished, tags
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            `, [
                 testimonial.userId, testimonial.patientName, testimonial.patientCountry,
                 testimonial.patientAge, testimonial.treatmentType, testimonial.hospitalName,
                 testimonial.doctorName, testimonial.rating, testimonial.testimonialText,
                 testimonial.treatmentDate, testimonial.treatmentDuration, testimonial.costSaved,
                 testimonial.isVerified, testimonial.isApproved, testimonial.isPublished,
                 testimonial.tags
-            );
+            ]);
         }
-        await stmt.finalize();
         console.log('Sample testimonials seeded successfully.');
     }
 }

@@ -9,8 +9,8 @@ RUN mkdir -p /etc/ssl/certs /etc/ssl/private
 # Generate self-signed certificate for development (replace with real certs in production)
 RUN apk add --no-cache openssl && \
     openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-    -keyout /etc/ssl/private/selfsigned.key \
-    -out /etc/ssl/certs/selfsigned.crt \
+    -keyout /etc/ssl/private/ssl-cert-snakeoil.key \
+    -out /etc/ssl/certs/ssl-cert-snakeoil.pem \
     -subj "/C=US/ST=State/L=City/O=Organization/CN=localhost"
 
 # Switch to non-root user
